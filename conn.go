@@ -150,6 +150,7 @@ func (c *Conn) Connect() (*IdentifyResponse, error) {
 		return nil, err
 	}
 	c.conn = conn.(*net.TCPConn)
+	c.conn.SetNoDelay(c.config.TcpNoDelay)
 	c.r = conn
 	c.w = conn
 
@@ -258,6 +259,7 @@ func (c *Conn) WriteCommand(cmd *Command) error {
 	if err != nil {
 		goto exit
 	}
+
 	err = c.Flush()
 
 exit:
@@ -561,10 +563,12 @@ func (c *Conn) writeLoop() {
 			// Decrement this here so it is correct even if we can't respond to nsqd
 			msgsInFlight := atomic.AddInt64(&c.messagesInFlight, -1)
 
+			var err error
 			if resp.success {
 				c.log(LogLevelDebug, "FIN %s", resp.msg.ID)
 				c.delegate.OnMessageFinished(c, resp.msg)
 				c.delegate.OnResume(c)
+				err = c.WriteCommand(resp.cmd)
 			} else {
 				c.log(LogLevelDebug, "REQ %s", resp.msg.ID)
 				c.delegate.OnMessageRequeued(c, resp.msg)
@@ -573,9 +577,9 @@ func (c *Conn) writeLoop() {
 				} else {
 					c.delegate.OnContinue(c)
 				}
+				err = c.WriteCommand(resp.cmd)
 			}
 
-			err := c.WriteCommand(resp.cmd)
 			if err != nil {
 				c.log(LogLevelError, "error sending command %s - %s", resp.cmd, err)
 				c.close()
